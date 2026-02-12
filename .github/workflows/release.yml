@@ -1,0 +1,29 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          /usr/bin/swiftc -O -framework AppKit -framework Foundation -o dist/CodexRunlight CodexRunlight.swift
+          cp install.sh dist/install.sh
+          chmod +x dist/install.sh
+
+      - name: Package
+        run: |
+          cd dist
+          zip -r CodexRunlight-macos.zip CodexRunlight install.sh
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CodexRunlight-macos.zip
