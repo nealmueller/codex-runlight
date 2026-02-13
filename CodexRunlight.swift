@@ -137,6 +137,28 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Codex.app"))
     }
 
+    @objc private func checkForUpdates() {
+        if let url = URL(string: "https://github.com/nealmueller/codex-runlight/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func requestAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    @objc private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openLogsFolder() {
+        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
+        NSWorkspace.shared.open(logs)
+    }
+
     @objc private func copyDiagnostics() {
         let scope = selectedScope().persistedValue
         let style = selectedStyle().id
@@ -144,6 +166,7 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
 
         let payload: [String: Any] = [
             "app": "Codex Runlight",
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
             "scope": scope,
             "style": style,
             "state_path": codexStatePath,
@@ -333,9 +356,27 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         openItem.target = self
         menu.addItem(openItem)
 
+        let updateItem = NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "u")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
         let diagItem = NSMenuItem(title: "Copy Diagnostics", action: #selector(copyDiagnostics), keyEquivalent: "d")
         diagItem.target = self
         menu.addItem(diagItem)
+
+        let logsItem = NSMenuItem(title: "Open Logs Folder", action: #selector(openLogsFolder), keyEquivalent: "l")
+        logsItem.target = self
+        menu.addItem(logsItem)
+
+        if !state.signals.accessibilityTrusted {
+            let reqA11y = NSMenuItem(title: "Enable Accessibility (Prompt)", action: #selector(requestAccessibilityPermission), keyEquivalent: "")
+            reqA11y.target = self
+            menu.addItem(reqA11y)
+
+            let openA11y = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+            openA11y.target = self
+            menu.addItem(openA11y)
+        }
 
         menu.addItem(.separator())
 
@@ -399,7 +440,9 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
 
     private func statusLineItem(state: PulseState) -> NSMenuItem {
         let title: String
-        if !state.anyBusy {
+        if !state.signals.accessibilityTrusted && !state.anyBusy {
+            title = "Dormant (\(state.confidence), limited: Accessibility off)"
+        } else if !state.anyBusy {
             title = "Dormant (\(state.confidence))"
         } else if state.activeWorkspaceRoots.isEmpty {
             title = "Thinking (workspace unknown, \(state.confidence))"

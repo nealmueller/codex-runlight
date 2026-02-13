@@ -36,7 +36,7 @@ rm -rf "$HOME/Library/Application Support/CodexRunlight"
 
 ## Build Locally
 ```bash
-/usr/bin/swiftc -O -framework AppKit -framework Foundation -o CodexRunlight CodexRunlight.swift
+/usr/bin/swiftc -O -framework AppKit -framework Foundation -framework ApplicationServices -o CodexRunlight CodexRunlight.swift
 ```
 
 ## Build App + DMG Locally
@@ -48,6 +48,20 @@ VERSION=0.1.2 scripts/build_macos_artifacts.sh
 By default, artifacts are unsigned. For smoother install on other machines, use Developer ID signing + notarization with:
 - `CODESIGN_IDENTITY`
 - `NOTARY_PROFILE`
+
+GitHub release workflow can sign/notarize automatically when these repository secrets are set:
+- `APPLE_CODESIGN_IDENTITY`
+- `APPLE_DEVELOPER_ID_CERT_P12` (base64-encoded `.p12`)
+- `APPLE_DEVELOPER_ID_CERT_PASSWORD`
+- `APPLE_ID`
+- `APPLE_TEAM_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+
+## First Run
+If accuracy is low, enable Accessibility access:
+1. Open Runlight menu.
+2. Click `Enable Accessibility (Prompt)`.
+3. Approve Runlight in System Settings > Privacy & Security > Accessibility.
 
 ## Privacy
 - Reads local Codex state from `~/.codex/.codex-global-state.json`

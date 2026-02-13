@@ -30,6 +30,10 @@ echo "Building binary..."
 
 chmod +x "$APP_MACOS/$BIN_NAME"
 
+if [[ -f "$ROOT_DIR/assets/AppIcon.icns" ]]; then
+  cp "$ROOT_DIR/assets/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
+fi
+
 cat >"$APP_CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -43,6 +47,8 @@ cat >"$APP_CONTENTS/Info.plist" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundlePackageType</key>
@@ -88,4 +94,3 @@ echo "Artifacts created:"
 echo "  $APP_BUNDLE"
 echo "  $ZIP_PATH"
 echo "  $DMG_PATH"
-
