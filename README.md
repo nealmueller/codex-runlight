@@ -7,9 +7,7 @@ Tiny macOS menu bar app that shows whether Codex Desktop is currently thinking.
 - Recommended file: `CodexRunlight-macos.dmg`
 
 ## Screenshots
-- Menu bar (running): coming soon
-- Menu bar (dormant): coming soon
-- Style presets menu: coming soon
+![Codex Runlight menubar state](assets/screenshots/menubar-codex-only.png)
 
 ## Features
 - Menu bar indicator for `thinking` vs `dormant`
