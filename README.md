@@ -2,6 +2,15 @@
 
 Tiny macOS menu bar app that shows whether Codex Desktop is currently thinking.
 
+## Download
+- Free download via GitHub Releases: https://github.com/nealmueller/codex-runlight/releases/latest
+- Recommended file: `CodexRunlight-macos.dmg`
+
+## Screenshots
+- Menu bar (running): coming soon
+- Menu bar (dormant): coming soon
+- Style presets menu: coming soon
+
 ## Features
 - Menu bar indicator for `thinking` vs `dormant`
 - Scope picker: `All` or a specific workspace
@@ -68,7 +77,17 @@ If accuracy is low, enable Accessibility access:
 - Reads local Codex state from `~/.codex/.codex-global-state.json`
 - Uses local process CPU (`pgrep`, `ps`) to estimate activity
 - Optionally uses Accessibility data (if granted) to improve accuracy
+- Stores preferences at `~/Library/Application Support/CodexRunlight/`
 - Sends no analytics and performs no network requests
+
+## Known Limitations
+- Codex app UI updates may change Accessibility text patterns and reduce signal quality until updated.
+- If Codex processes are idle between bursts, status can briefly flip to dormant.
+- Per-project detection depends on available local Codex state and may be less reliable than `All`.
+
+## Support
+- Use `Copy Diagnostics` from the app menu when reporting issues.
+- Open an issue: https://github.com/nealmueller/codex-runlight/issues
 
 ## License
 MIT
