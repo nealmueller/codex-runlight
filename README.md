@@ -5,6 +5,11 @@ Tiny macOS menu bar app that shows whether Codex Desktop is currently thinking.
 ## Features
 - Menu bar indicator for `thinking` vs `dormant`
 - Scope picker: `All` or a specific workspace
+- Hybrid detection engine:
+  - Accessibility signal from Codex UI text
+  - Process CPU activity signal
+  - Recent Codex state-file activity signal
+  - Hysteresis to reduce flicker
 - Preset indicator styles (no custom input):
   - Animated Wheel: `◐ ◓ ◑ ◒` / `⏸️`
   - Play/Pause: `▶️` / `⏸️`
@@ -32,6 +37,7 @@ rm -rf "$HOME/Library/Application Support/CodexRunlight"
 ## Privacy
 - Reads local Codex state from `~/.codex/.codex-global-state.json`
 - Uses local process CPU (`pgrep`, `ps`) to estimate activity
+- Optionally uses Accessibility data (if granted) to improve accuracy
 - Sends no analytics and performs no network requests
 
 ## License

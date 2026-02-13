@@ -17,7 +17,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
-          /usr/bin/swiftc -O -framework AppKit -framework Foundation -o dist/CodexRunlight CodexRunlight.swift
+          /usr/bin/swiftc -O -framework AppKit -framework Foundation -framework ApplicationServices -o dist/CodexRunlight CodexRunlight.swift
           cp install.sh dist/install.sh
           chmod +x dist/install.sh
 

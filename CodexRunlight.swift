@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 final class CodexRunlightApp: NSObject, NSApplicationDelegate {
@@ -8,25 +9,32 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
     private var spinnerFrameIndex: Int = 0
     private var lastComputedBusyForSelectedScope: Bool = false
 
-    private let refreshInterval: TimeInterval = 3
-    private let cpuBusyThresholdPercent: Double = 8.0
+    private let refreshInterval: TimeInterval = 2
+    private let processCpuBusyThresholdPercent: Double = 8.0
+    private let stateFreshnessWindowSeconds: TimeInterval = 12
 
-    private let codexStatePath = (FileManager.default.homeDirectoryForCurrentUser
+    private let codexStatePath = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex")
-        .appendingPathComponent(".codex-global-state.json")).path
+        .appendingPathComponent(".codex-global-state.json")
+        .path
 
     private let defaults = UserDefaults.standard
     private let selectedKey = "CodexRunlight.selectedScope" // "ALL" or workspace root path
     private let styleKey = "CodexRunlight.style"
+
+    // Hysteresis so indicator doesn't flap with noisy signals.
+    private var stableBusyState: Bool = false
+    private var consecutiveSamplesTowardFlip: Int = 0
+    private let samplesRequiredToFlip: Int = 2
+
+    // Last signal snapshot for diagnostics and status details.
+    private var lastSignalSnapshot = SignalSnapshot.empty
 
     private struct IndicatorStyle {
         let id: String
         let title: String
         let runningFrames: [String]
         let dormantGlyph: String
-
-        var isAnimated: Bool { runningFrames.count > 1 }
-        var runningGlyph: String { runningFrames.first ?? "▶️" }
     }
 
     private let styles: [IndicatorStyle] = [
@@ -62,6 +70,46 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private struct SignalSnapshot {
+        let codexPids: [Int]
+        let processCpuPercent: Double
+        let processBusy: Bool
+
+        let stateFileExists: Bool
+        let stateFileAgeSeconds: Double?
+        let stateFresh: Bool
+
+        let accessibilityTrusted: Bool
+        let accessibilityMatched: Bool
+
+        let rawScore: Double
+        let confidence: String
+        let finalBusy: Bool
+
+        static let empty = SignalSnapshot(
+            codexPids: [],
+            processCpuPercent: 0,
+            processBusy: false,
+            stateFileExists: false,
+            stateFileAgeSeconds: nil,
+            stateFresh: false,
+            accessibilityTrusted: false,
+            accessibilityMatched: false,
+            rawScore: 0,
+            confidence: "low",
+            finalBusy: false
+        )
+    }
+
+    private struct PulseState {
+        let savedWorkspaceRoots: [String]
+        let activeWorkspaceRoots: [String]
+        let labelsByRoot: [String: String]
+        let anyBusy: Bool
+        let confidence: String
+        let signals: SignalSnapshot
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
@@ -76,8 +124,6 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
             self?.refreshUI()
         }
 
-        // Animate the "thinking" indicator smoothly; we only update the title here,
-        // and refreshUI() updates whether we're actually busy.
         animationTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] _ in
             self?.tickSpinner()
         }
@@ -88,27 +134,32 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openCodex() {
-        let path = "/Applications/Codex.app"
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Codex.app"))
     }
 
     @objc private func copyDiagnostics() {
         let scope = selectedScope().persistedValue
         let style = selectedStyle().id
-        let pids = codexPids()
-        let cpu = combinedCpuPercent(pids: pids)
-        let statePath = codexStatePath
-        let stateExists = FileManager.default.fileExists(atPath: statePath)
+        let s = lastSignalSnapshot
 
         let payload: [String: Any] = [
             "app": "Codex Runlight",
             "scope": scope,
             "style": style,
-            "state_path": statePath,
-            "state_exists": stateExists,
-            "codex_pid_count": pids.count,
-            "combined_cpu_percent": cpu,
-            "busy_threshold_percent": cpuBusyThresholdPercent,
+            "state_path": codexStatePath,
+            "state_file_exists": s.stateFileExists,
+            "state_file_age_seconds": s.stateFileAgeSeconds as Any,
+            "state_fresh_signal": s.stateFresh,
+            "codex_pids": s.codexPids,
+            "codex_pid_count": s.codexPids.count,
+            "process_cpu_percent": s.processCpuPercent,
+            "process_busy_threshold_percent": processCpuBusyThresholdPercent,
+            "process_busy_signal": s.processBusy,
+            "accessibility_trusted": s.accessibilityTrusted,
+            "accessibility_signal": s.accessibilityMatched,
+            "raw_score": s.rawScore,
+            "confidence": s.confidence,
+            "stable_busy_state": s.finalBusy,
         ]
 
         let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])) ?? Data()
@@ -134,28 +185,15 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         refreshUI()
     }
 
-    private struct PulseState {
-        let savedWorkspaceRoots: [String]
-        let activeWorkspaceRoots: [String]
-        let labelsByRoot: [String: String]
-        let anyBusy: Bool
-    }
-
-    private func currentState() -> PulseState {
-        let (saved, active, labels) = readCodexState()
-        let anyBusy = isCodexBusy(cpuThresholdPercent: cpuBusyThresholdPercent)
-        return PulseState(
-            savedWorkspaceRoots: saved,
-            activeWorkspaceRoots: active,
-            labelsByRoot: labels,
-            anyBusy: anyBusy
-        )
-    }
-
     private func selectedScope() -> Scope {
         let raw = defaults.string(forKey: selectedKey) ?? "ALL"
         if raw == "ALL" { return .all }
         return .workspaceRoot(raw)
+    }
+
+    private func selectedStyle() -> IndicatorStyle {
+        let raw = defaults.string(forKey: styleKey) ?? "animated-wheel"
+        return styles.first(where: { $0.id == raw }) ?? styles[0]
     }
 
     private func refreshUI() {
@@ -164,7 +202,6 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
 
             let state = self.currentState()
             let scope = self.selectedScope()
-
             let busy = self.isBusy(scope: scope, state: state)
 
             DispatchQueue.main.async {
@@ -177,6 +214,79 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
                 self.statusItem.menu = self.buildMenu(state: state)
             }
         }
+    }
+
+    private func currentState() -> PulseState {
+        let (saved, active, labels) = readCodexState()
+        let signals = computeHybridSignals()
+
+        return PulseState(
+            savedWorkspaceRoots: saved,
+            activeWorkspaceRoots: active,
+            labelsByRoot: labels,
+            anyBusy: signals.finalBusy,
+            confidence: signals.confidence,
+            signals: signals
+        )
+    }
+
+    private func computeHybridSignals() -> SignalSnapshot {
+        let pids = codexPids()
+        let cpu = combinedCpuPercent(pids: pids)
+        let processBusy = !pids.isEmpty && cpu >= processCpuBusyThresholdPercent
+
+        let (exists, ageSeconds) = stateFileFreshnessAgeSeconds()
+        let stateFresh = exists && ((ageSeconds ?? 9_999) <= stateFreshnessWindowSeconds)
+
+        let a11yTrusted = isAccessibilityTrusted()
+        let a11yMatched = a11yTrusted && codexAccessibilityIndicatesThinking()
+
+        // Weighted blend: A11y is strongest when available; process and state help as backup.
+        var score = 0.0
+        if a11yMatched { score += 0.60 }
+        if processBusy { score += 0.25 }
+        if stateFresh { score += 0.15 }
+
+        let rawBusy = score >= 0.60
+        let finalBusy = applyHysteresis(rawBusy)
+        let confidence = confidenceLabel(score: score, a11yTrusted: a11yTrusted)
+
+        let snapshot = SignalSnapshot(
+            codexPids: pids,
+            processCpuPercent: cpu,
+            processBusy: processBusy,
+            stateFileExists: exists,
+            stateFileAgeSeconds: ageSeconds,
+            stateFresh: stateFresh,
+            accessibilityTrusted: a11yTrusted,
+            accessibilityMatched: a11yMatched,
+            rawScore: score,
+            confidence: confidence,
+            finalBusy: finalBusy
+        )
+
+        lastSignalSnapshot = snapshot
+        return snapshot
+    }
+
+    private func applyHysteresis(_ rawBusy: Bool) -> Bool {
+        if rawBusy == stableBusyState {
+            consecutiveSamplesTowardFlip = 0
+            return stableBusyState
+        }
+
+        consecutiveSamplesTowardFlip += 1
+        if consecutiveSamplesTowardFlip >= samplesRequiredToFlip {
+            stableBusyState = rawBusy
+            consecutiveSamplesTowardFlip = 0
+        }
+        return stableBusyState
+    }
+
+    private func confidenceLabel(score: Double, a11yTrusted: Bool) -> String {
+        if score >= 0.75 { return "high" }
+        if score >= 0.45 { return a11yTrusted ? "medium" : "medium (heuristic)" }
+        return a11yTrusted ? "low" : "low (heuristic)"
     }
 
     private func isBusy(scope: Scope, state: PulseState) -> Bool {
@@ -204,11 +314,11 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
     private func tooltipText(scope: Scope, state: PulseState) -> String {
         switch scope {
         case .all:
-            return state.anyBusy ? "Codex: thinking" : "Codex: dormant"
+            return state.anyBusy ? "Codex: thinking (\(state.confidence))" : "Codex: dormant (\(state.confidence))"
         case .workspaceRoot(let root):
             let label = shortLabel(forRoot: root, labelsByRoot: state.labelsByRoot)
             let busy = state.anyBusy && state.activeWorkspaceRoots.contains(root)
-            return busy ? "\(label): thinking" : "\(label): dormant"
+            return busy ? "\(label): thinking (\(state.confidence))" : "\(label): dormant (\(state.confidence))"
         }
     }
 
@@ -256,8 +366,6 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         allItem.state = (selected == "ALL") ? .on : .off
         menu.addItem(allItem)
 
-        // Prefer showing all known workspaces so you can pre-select a project,
-        // but annotate active ones in the title so it's obvious what's running.
         let saved = state.savedWorkspaceRoots
         if !saved.isEmpty {
             for (idx, root) in saved.enumerated() {
@@ -266,7 +374,6 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
                 let title = isActive ? "\(base) (active)" : base
 
                 let item = NSMenuItem(title: title, action: #selector(selectScope(_:)), keyEquivalent: "")
-                // Optional quick keys for first 9 workspaces.
                 if idx < 9 { item.keyEquivalent = "\(idx + 2)" }
                 item.target = self
                 item.representedObject = root
@@ -280,10 +387,7 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-
-        let statusLine = statusLineItem(state: state)
-        menu.addItem(statusLine)
-
+        menu.addItem(statusLineItem(state: state))
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit Codex Runlight", action: #selector(quitApp), keyEquivalent: "q")
@@ -294,20 +398,19 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
     }
 
     private func statusLineItem(state: PulseState) -> NSMenuItem {
-        let anyBusy = state.anyBusy
-        let active = state.activeWorkspaceRoots
         let title: String
-
-        if !anyBusy {
-            title = "Dormant"
-        } else if active.isEmpty {
-            title = "Thinking (workspace unknown)"
-        } else if active.count == 1 {
-            let label = shortLabel(forRoot: active[0], labelsByRoot: state.labelsByRoot)
-            title = "Thinking: \(label)"
+        if !state.anyBusy {
+            title = "Dormant (\(state.confidence))"
+        } else if state.activeWorkspaceRoots.isEmpty {
+            title = "Thinking (workspace unknown, \(state.confidence))"
+        } else if state.activeWorkspaceRoots.count == 1 {
+            let label = shortLabel(forRoot: state.activeWorkspaceRoots[0], labelsByRoot: state.labelsByRoot)
+            title = "Thinking: \(label) (\(state.confidence))"
         } else {
-            let labels = active.map { shortLabel(forRoot: $0, labelsByRoot: state.labelsByRoot) }.joined(separator: ", ")
-            title = "Thinking: \(labels)"
+            let labels = state.activeWorkspaceRoots
+                .map { shortLabel(forRoot: $0, labelsByRoot: state.labelsByRoot) }
+                .joined(separator: ", ")
+            title = "Thinking: \(labels) (\(state.confidence))"
         }
 
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -324,19 +427,12 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
         return clamp(root, max: 14)
     }
 
-    private func selectedStyle() -> IndicatorStyle {
-        let raw = defaults.string(forKey: styleKey) ?? "animated-wheel"
-        return styles.first(where: { $0.id == raw }) ?? styles[0]
-    }
-
     private func clamp(_ s: String, max: Int) -> String {
         if s.count <= max { return s }
         return String(s.prefix(max - 3)) + "..."
     }
 
     private func readCodexState() -> (saved: [String], active: [String], labels: [String: String]) {
-        // This file appears to be shared state between Codex Desktop and the CLI.
-        // We only depend on a few keys and fail soft if the file is missing/invalid.
         guard let data = FileManager.default.contents(atPath: codexStatePath) else {
             return ([], [], [:])
         }
@@ -350,30 +446,114 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
 
             var labels: [String: String] = [:]
             if let raw = dict["electron-workspace-root-labels"] as? [String: Any] {
-                for (k, v) in raw {
-                    if let s = v as? String { labels[k] = s }
+                for (k, v) in raw where v is String {
+                    labels[k] = v as? String
                 }
             }
-
             return (saved, active, labels)
         } catch {
             return ([], [], [:])
         }
     }
 
-    private func isCodexBusy(cpuThresholdPercent: Double) -> Bool {
-        // Heuristic: if the combined CPU usage of Codex-related processes is above a threshold,
-        // treat it as "thinking". This is not perfect (network-wait phases can appear idle),
-        // but it's a reliable lightweight signal without tapping private app internals.
-        let pids = codexPids()
-        if pids.isEmpty { return false }
+    private func stateFileFreshnessAgeSeconds() -> (exists: Bool, age: Double?) {
+        let path = codexStatePath
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let modified = attrs[.modificationDate] as? Date else {
+            return (FileManager.default.fileExists(atPath: path), nil)
+        }
+        let age = Date().timeIntervalSince(modified)
+        return (true, age)
+    }
 
-        let cpu = combinedCpuPercent(pids: pids)
-        return cpu >= cpuThresholdPercent
+    private func isAccessibilityTrusted() -> Bool {
+        return AXIsProcessTrusted()
+    }
+
+    private func codexAccessibilityIndicatesThinking() -> Bool {
+        guard let app = codexRunningApplicationForAccessibility() else { return false }
+
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let text = accessibilityFlattenedText(from: appElement, maxNodes: 260).lowercased()
+
+        // Keep this broad to survive moderate UI wording changes.
+        let keywords = [
+            "thinking",
+            "running",
+            "in progress",
+            "working",
+            "generating",
+            "streaming",
+            "applying",
+            "executing"
+        ]
+
+        return keywords.contains(where: { text.contains($0) })
+    }
+
+    private func codexRunningApplicationForAccessibility() -> NSRunningApplication? {
+        let candidates = NSWorkspace.shared.runningApplications.filter { app in
+            if let bundleID = app.bundleIdentifier, bundleID == "com.openai.codex" { return true }
+            if let bundleURL = app.bundleURL?.path, bundleURL.contains("/Codex.app") { return true }
+            return app.localizedName == "Codex"
+        }
+
+        // Prefer frontmost Codex window if multiple helpers are present.
+        return candidates.sorted { a, b in
+            if a.isActive != b.isActive { return a.isActive }
+            return a.processIdentifier > b.processIdentifier
+        }.first
+    }
+
+    private func accessibilityFlattenedText(from root: AXUIElement, maxNodes: Int) -> String {
+        var queue: [AXUIElement] = [root]
+        var visited = 0
+        var parts: [String] = []
+
+        while !queue.isEmpty && visited < maxNodes {
+            let node = queue.removeFirst()
+            visited += 1
+
+            if let s = axString(node, attribute: kAXTitleAttribute) { parts.append(s) }
+            if let s = axString(node, attribute: kAXValueAttribute) { parts.append(s) }
+            if let s = axString(node, attribute: kAXDescriptionAttribute) { parts.append(s) }
+            if let s = axString(node, attribute: kAXHelpAttribute) { parts.append(s) }
+
+            if let children = axChildren(node, attribute: kAXChildrenAttribute) { queue.append(contentsOf: children) }
+        }
+
+        return parts.joined(separator: " ")
+    }
+
+    private func axString(_ element: AXUIElement, attribute: String) -> String? {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard err == .success, let v = value else { return nil }
+
+        if CFGetTypeID(v) == CFStringGetTypeID() {
+            return (v as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let n = v as? NSNumber {
+            return n.stringValue
+        }
+        return nil
+    }
+
+    private func axChildren(_ element: AXUIElement, attribute: String) -> [AXUIElement]? {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard err == .success, let v = value else { return nil }
+        if let arr = v as? [AXUIElement] { return arr }
+        if let arr = v as? [Any] {
+            return arr.compactMap { item in
+                let type = CFGetTypeID(item as CFTypeRef)
+                return type == AXUIElementGetTypeID() ? unsafeBitCast(item, to: AXUIElement.self) : nil
+            }
+        }
+        return nil
     }
 
     private func codexPids() -> [Int] {
-        // Match Codex Desktop's app bundle paths.
         let patterns = [
             "/Applications/Codex.app/Contents/MacOS/Codex",
             "/Applications/Codex.app/Contents/Frameworks/",
@@ -391,7 +571,7 @@ final class CodexRunlightApp: NSObject, NSApplicationDelegate {
     }
 
     private func combinedCpuPercent(pids: [Int]) -> Double {
-        // ps can take a comma-separated pid list.
+        guard !pids.isEmpty else { return 0 }
         let pidList = pids.map(String.init).joined(separator: ",")
         let psOut = runProcess("/bin/ps", args: ["-p", pidList, "-o", "%cpu="])
 

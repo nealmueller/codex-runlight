@@ -13,6 +13,7 @@ mkdir -p "$(dirname "$PLIST_PATH")"
 
 echo "Building $APP_NAME..."
 /usr/bin/swiftc -O -framework AppKit -framework Foundation \
+  -framework ApplicationServices \
   -o "$DEST_DIR/$APP_NAME" \
   "$SRC_DIR/$APP_NAME.swift"
 
