@@ -46,7 +46,7 @@ jobs:
       - name: Build Artifacts
         env:
           CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
-          NOTARY_PROFILE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && 'notary-profile' || '' }}
+          NOTARY_PROFILE: notary-profile
         run: |
           chmod +x scripts/build_macos_artifacts.sh
           VERSION="${GITHUB_REF_NAME#v}" scripts/build_macos_artifacts.sh

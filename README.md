@@ -15,6 +15,7 @@ Tiny macOS menu bar app that shows whether Codex Desktop is currently thinking.
   - Play/Pause: `▶️` / `⏸️`
   - Run/Sleep: `🏃` / `💤`
 - One-click `Copy Diagnostics` for support/debugging
+- One-click `Check for Updates` and `Open Logs Folder`
 - Launch at login via LaunchAgent
 
 ## Install (Easiest)
