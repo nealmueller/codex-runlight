@@ -17,7 +17,12 @@ Tiny macOS menu bar app that shows whether Codex Desktop is currently thinking.
 - One-click `Copy Diagnostics` for support/debugging
 - Launch at login via LaunchAgent
 
-## Install
+## Install (Easiest)
+1. Download `CodexRunlight-macos.dmg` from Releases.
+2. Open the DMG and drag `Codex Runlight.app` into `Applications`.
+3. Launch `Codex Runlight.app`.
+
+## Install (CLI)
 ```bash
 ./install.sh
 ```
@@ -33,6 +38,16 @@ rm -rf "$HOME/Library/Application Support/CodexRunlight"
 ```bash
 /usr/bin/swiftc -O -framework AppKit -framework Foundation -o CodexRunlight CodexRunlight.swift
 ```
+
+## Build App + DMG Locally
+```bash
+chmod +x scripts/build_macos_artifacts.sh
+VERSION=0.1.2 scripts/build_macos_artifacts.sh
+```
+
+By default, artifacts are unsigned. For smoother install on other machines, use Developer ID signing + notarization with:
+- `CODESIGN_IDENTITY`
+- `NOTARY_PROFILE`
 
 ## Privacy
 - Reads local Codex state from `~/.codex/.codex-global-state.json`

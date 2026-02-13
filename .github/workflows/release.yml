@@ -14,19 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
+      - name: Build Artifacts
         run: |
-          mkdir -p dist
-          /usr/bin/swiftc -O -framework AppKit -framework Foundation -framework ApplicationServices -o dist/CodexRunlight CodexRunlight.swift
-          cp install.sh dist/install.sh
-          chmod +x dist/install.sh
-
-      - name: Package
-        run: |
-          cd dist
-          zip -r CodexRunlight-macos.zip CodexRunlight install.sh
+          chmod +x scripts/build_macos_artifacts.sh
+          VERSION="${GITHUB_REF_NAME#v}" scripts/build_macos_artifacts.sh
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/CodexRunlight-macos.zip
+          files: |
+            dist/CodexRunlight-macos.zip
+            dist/CodexRunlight-macos.dmg
